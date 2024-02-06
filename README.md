@@ -1,2 +1,2 @@
 # studymodel
-2个关于gan的简单例子
+关于gan的简单例子
