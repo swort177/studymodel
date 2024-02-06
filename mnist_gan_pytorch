@@ -1,0 +1,362 @@
+#! /usr/bin/env python3
+# -*- coding:utf-8 -*-
+"""
+__author__ = 'Swort'
+__date__ = '2024/2/5 20:30'
+mnist  pytorch gan sample
+copy from https://github.com/lyeoni/pytorch-mnist-GAN/blob/master/pytorch-mnist-GAN.ipynb
+"""
+
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+import torch.optim as optim
+from torch.utils.data import DataLoader
+from torchvision import datasets, transforms
+from torchvision.utils import save_image
+
+# Device configuration
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+bs = 100  # 批次batch_size
+z_dim = 100  # 输入特征数量
+lr = 0.0002  # optimizer
+criterion = nn.BCELoss()  # loss 损失函数  要么是0 要么是1
+
+transform = transforms.Compose([
+    transforms.ToTensor(),
+    transforms.Normalize(mean=0.5, std=0.5)])
+# dataset
+train_dataset = datasets.MNIST(root='./mnist_data/', train=True, transform=transform, download=True)
+# test_dataset = datasets.MNIST(root='./mnist_data/', train=False, transform=transform, download=False)
+
+# Data Loader (Input Pipeline)
+train_loader = DataLoader(dataset=train_dataset, batch_size=bs, shuffle=True,num_workers=2)
+# test_loader = DataLoader(dataset=test_dataset, batch_size=bs, shuffle=False,num_workers=2)
+
+# 784 28*28
+mnist_dim = train_dataset.data.size(1) * train_dataset.data.size(2)
+
+
+class Generator(nn.Module):
+    def __init__(self, g_input_dim, g_output_dim):
+        super(Generator, self).__init__()
+        self.fc1 = nn.Linear(g_input_dim, 256)
+        self.fc2 = nn.Linear(self.fc1.out_features, 512)
+        self.fc3 = nn.Linear(self.fc2.out_features, 1024)
+        self.fc4 = nn.Linear(self.fc3.out_features, g_output_dim)
+
+    # forward method
+    def forward(self, x):
+        x = F.leaky_relu(self.fc1(x), 0.2)
+        x = F.leaky_relu(self.fc2(x), 0.2)
+        x = F.leaky_relu(self.fc3(x), 0.2)
+        return torch.tanh(self.fc4(x))
+
+
+class Discriminator(nn.Module):
+    def __init__(self, d_input_dim):
+        super(Discriminator, self).__init__()
+        self.fc1 = nn.Linear(d_input_dim, 1024)
+        self.fc2 = nn.Linear(self.fc1.out_features, 512)
+        self.fc3 = nn.Linear(self.fc2.out_features, 256)
+        self.fc4 = nn.Linear(self.fc3.out_features, 1)
+
+        # forward method
+
+    def forward(self, x):
+        x = F.leaky_relu(self.fc1(x), 0.2)
+        x = F.dropout(x, 0.3)
+        x = F.leaky_relu(self.fc2(x), 0.2)
+        x = F.dropout(x, 0.3)
+        x = F.leaky_relu(self.fc3(x), 0.2)
+        x = F.dropout(x, 0.3)
+        return torch.sigmoid(self.fc4(x))
+
+
+# print(f"{train_dataset.data.shape},{train_dataset.data.size(1)},{train_dataset.data.size(2)}")
+
+
+G = Generator(g_input_dim=z_dim, g_output_dim=mnist_dim).to(device)
+
+D = Discriminator(mnist_dim).to(device)
+
+# 启动随机梯度下降优化算法来设置优化器 学习率为0.0002  10e4
+G_optimizer = optim.Adam(G.parameters(), lr=lr)
+D_optimizer = optim.Adam(D.parameters(), lr=lr)
+
+
+# 定义生成器的训练
+def G_train(x):
+    # =======================Train the generator=======================#
+    G.zero_grad()
+    z = torch.randn(bs, z_dim).to(device)
+    y = torch.ones(bs, 1).to(device)
+    # 随机生成器
+    G_output = G(z)
+    
+    # 用实例化后的鉴别器去鉴别生成器的数字
+    D_output = D(G_output)
+    # 计算 要么是0 要么是1 损失函数
+    G_loss = criterion(D_output, y)
+
+    # gradient backprop & optimize ONLY G's parameters
+    G_loss.backward()
+    G_optimizer.step()
+
+    # 返回损失值
+    return G_loss.data.item()
+
+
+# 定义鉴别器的训练
+def D_train(x):
+    # =======================Train the discriminator=======================#
+    D.zero_grad()
+    # 鉴别器的训练
+    # train discriminator on real
+    x_real, y_real = x.view(-1, mnist_dim), torch.ones(bs, 1)
+    x_real, y_real = x_real.to(device), y_real.to(device)
+    # 得到真实训练损失值
+    D_output = D(x_real)
+    D_real_loss = criterion(D_output, y_real)
+
+    D_real_score = D_output
+
+    # train discriminator on facke
+    z = torch.randn(bs, z_dim).to(device)
+    x_fake, y_fake = G(z), torch.zeros(bs, 1).to(device)
+
+    D_output = D(x_fake)
+    D_fake_loss = criterion(D_output, y_fake)
+
+    D_fake_score = D_output
+
+    # gradient backprop & optimize ONLY D's parameters
+    D_loss = D_real_loss + D_fake_loss
+
+    D_loss.backward()
+    D_optimizer.step()
+
+    return D_loss.data.item()
+
+
+n_epoch = 200
+for epoch in range(1, n_epoch + 1):
+    D_losses, G_losses = [], []
+    for batch_idx, (x, _) in enumerate(train_loader):
+        D_losses.append(D_train(x))
+        G_losses.append(G_train(x))
+
+    print('[%d/%d]: loss_d: %.3f, loss_g: %.3f' % (
+        (epoch),
+        n_epoch,
+        torch.mean(torch.FloatTensor(D_losses)),
+        torch.mean(torch.FloatTensor(G_losses))))
+
+    with torch.no_grad():
+        test_z = torch.randn(bs, z_dim).to(device)
+        generated = G(test_z)
+
+        save_image(generated.view(generated.size(0), 1, 28, 28), './samples/sample_' + str(epoch) + '.png')
+
+#google colab 输出结果
+[1/200]: loss_d: 0.876, loss_g: 3.182
+[2/200]: loss_d: 1.041, loss_g: 1.758
+[3/200]: loss_d: 1.050, loss_g: 1.672
+[4/200]: loss_d: 0.763, loss_g: 2.335
+[5/200]: loss_d: 0.471, loss_g: 3.801
+[6/200]: loss_d: 0.532, loss_g: 3.171
+[7/200]: loss_d: 0.681, loss_g: 2.526
+[8/200]: loss_d: 0.609, loss_g: 2.535
+[9/200]: loss_d: 0.593, loss_g: 2.808
+[10/200]: loss_d: 0.615, loss_g: 2.573
+[11/200]: loss_d: 0.699, loss_g: 2.270
+[12/200]: loss_d: 0.641, loss_g: 2.360
+[13/200]: loss_d: 0.749, loss_g: 2.171
+[14/200]: loss_d: 0.751, loss_g: 2.064
+[15/200]: loss_d: 0.764, loss_g: 2.035
+[16/200]: loss_d: 0.779, loss_g: 1.977
+[17/200]: loss_d: 0.741, loss_g: 2.056
+[18/200]: loss_d: 0.827, loss_g: 1.912
+[19/200]: loss_d: 0.828, loss_g: 1.819
+[20/200]: loss_d: 0.854, loss_g: 1.751
+[21/200]: loss_d: 0.851, loss_g: 1.746
+[22/200]: loss_d: 0.884, loss_g: 1.675
+[23/200]: loss_d: 0.914, loss_g: 1.588
+[24/200]: loss_d: 0.959, loss_g: 1.502
+[25/200]: loss_d: 0.930, loss_g: 1.567
+[26/200]: loss_d: 0.946, loss_g: 1.515
+[27/200]: loss_d: 0.980, loss_g: 1.470
+[28/200]: loss_d: 0.984, loss_g: 1.439
+[29/200]: loss_d: 0.987, loss_g: 1.418
+[30/200]: loss_d: 1.012, loss_g: 1.384
+[31/200]: loss_d: 1.020, loss_g: 1.370
+[32/200]: loss_d: 1.026, loss_g: 1.356
+[33/200]: loss_d: 1.023, loss_g: 1.349
+[34/200]: loss_d: 1.036, loss_g: 1.320
+[35/200]: loss_d: 1.050, loss_g: 1.305
+[36/200]: loss_d: 1.060, loss_g: 1.281
+[37/200]: loss_d: 1.045, loss_g: 1.292
+[38/200]: loss_d: 1.078, loss_g: 1.241
+[39/200]: loss_d: 1.055, loss_g: 1.293
+[40/200]: loss_d: 1.057, loss_g: 1.291
+[41/200]: loss_d: 1.056, loss_g: 1.299
+[42/200]: loss_d: 1.076, loss_g: 1.263
+[43/200]: loss_d: 1.091, loss_g: 1.203
+[44/200]: loss_d: 1.100, loss_g: 1.203
+[45/200]: loss_d: 1.105, loss_g: 1.209
+[46/200]: loss_d: 1.104, loss_g: 1.186
+[47/200]: loss_d: 1.121, loss_g: 1.157
+[48/200]: loss_d: 1.137, loss_g: 1.143
+[49/200]: loss_d: 1.154, loss_g: 1.109
+[50/200]: loss_d: 1.131, loss_g: 1.143
+[51/200]: loss_d: 1.155, loss_g: 1.090
+[52/200]: loss_d: 1.162, loss_g: 1.102
+[53/200]: loss_d: 1.155, loss_g: 1.104
+[54/200]: loss_d: 1.161, loss_g: 1.092
+[55/200]: loss_d: 1.156, loss_g: 1.102
+[56/200]: loss_d: 1.178, loss_g: 1.062
+[57/200]: loss_d: 1.171, loss_g: 1.064
+[58/200]: loss_d: 1.187, loss_g: 1.052
+[59/200]: loss_d: 1.183, loss_g: 1.055
+[60/200]: loss_d: 1.181, loss_g: 1.048
+[61/200]: loss_d: 1.193, loss_g: 1.061
+[62/200]: loss_d: 1.182, loss_g: 1.038
+[63/200]: loss_d: 1.180, loss_g: 1.062
+[64/200]: loss_d: 1.189, loss_g: 1.035
+[65/200]: loss_d: 1.206, loss_g: 1.008
+[66/200]: loss_d: 1.197, loss_g: 1.028
+[67/200]: loss_d: 1.198, loss_g: 1.026
+[68/200]: loss_d: 1.206, loss_g: 1.024
+[69/200]: loss_d: 1.207, loss_g: 1.009
+[70/200]: loss_d: 1.214, loss_g: 0.993
+[71/200]: loss_d: 1.214, loss_g: 0.999
+[72/200]: loss_d: 1.210, loss_g: 1.007
+[73/200]: loss_d: 1.218, loss_g: 0.980
+[74/200]: loss_d: 1.214, loss_g: 1.002
+[75/200]: loss_d: 1.220, loss_g: 0.991
+[76/200]: loss_d: 1.221, loss_g: 0.991
+[77/200]: loss_d: 1.233, loss_g: 0.977
+[78/200]: loss_d: 1.228, loss_g: 0.978
+[79/200]: loss_d: 1.228, loss_g: 0.981
+[80/200]: loss_d: 1.237, loss_g: 0.961
+[81/200]: loss_d: 1.230, loss_g: 0.972
+[82/200]: loss_d: 1.234, loss_g: 0.971
+[83/200]: loss_d: 1.235, loss_g: 0.972
+[84/200]: loss_d: 1.231, loss_g: 0.972
+[85/200]: loss_d: 1.237, loss_g: 0.966
+[86/200]: loss_d: 1.234, loss_g: 0.979
+[87/200]: loss_d: 1.230, loss_g: 0.971
+[88/200]: loss_d: 1.248, loss_g: 0.948
+[89/200]: loss_d: 1.248, loss_g: 0.936
+[90/200]: loss_d: 1.249, loss_g: 0.944
+[91/200]: loss_d: 1.226, loss_g: 1.027
+[92/200]: loss_d: 1.220, loss_g: 0.987
+[93/200]: loss_d: 1.237, loss_g: 0.960
+[94/200]: loss_d: 1.246, loss_g: 0.936
+[95/200]: loss_d: 1.250, loss_g: 0.944
+[96/200]: loss_d: 1.241, loss_g: 0.969
+[97/200]: loss_d: 1.238, loss_g: 0.953
+[98/200]: loss_d: 1.251, loss_g: 0.936
+[99/200]: loss_d: 1.242, loss_g: 0.957
+[100/200]: loss_d: 1.244, loss_g: 0.959
+[101/200]: loss_d: 1.252, loss_g: 0.927
+[102/200]: loss_d: 1.255, loss_g: 0.937
+[103/200]: loss_d: 1.257, loss_g: 0.917
+[104/200]: loss_d: 1.256, loss_g: 0.938
+[105/200]: loss_d: 1.250, loss_g: 0.936
+[106/200]: loss_d: 1.254, loss_g: 0.934
+[107/200]: loss_d: 1.253, loss_g: 0.931
+[108/200]: loss_d: 1.259, loss_g: 0.928
+[109/200]: loss_d: 1.262, loss_g: 0.925
+[110/200]: loss_d: 1.256, loss_g: 0.924
+[111/200]: loss_d: 1.266, loss_g: 0.920
+[112/200]: loss_d: 1.258, loss_g: 0.921
+[113/200]: loss_d: 1.255, loss_g: 0.945
+[114/200]: loss_d: 1.262, loss_g: 0.917
+[115/200]: loss_d: 1.262, loss_g: 0.912
+[116/200]: loss_d: 1.263, loss_g: 0.924
+[117/200]: loss_d: 1.266, loss_g: 0.910
+[118/200]: loss_d: 1.269, loss_g: 0.921
+[119/200]: loss_d: 1.260, loss_g: 0.918
+[120/200]: loss_d: 1.266, loss_g: 0.915
+[121/200]: loss_d: 1.274, loss_g: 0.906
+[122/200]: loss_d: 1.267, loss_g: 0.919
+[123/200]: loss_d: 1.259, loss_g: 0.924
+[124/200]: loss_d: 1.268, loss_g: 0.916
+[125/200]: loss_d: 1.271, loss_g: 0.898
+[126/200]: loss_d: 1.272, loss_g: 0.914
+[127/200]: loss_d: 1.267, loss_g: 0.920
+[128/200]: loss_d: 1.266, loss_g: 0.912
+[129/200]: loss_d: 1.269, loss_g: 0.906
+[130/200]: loss_d: 1.279, loss_g: 0.897
+[131/200]: loss_d: 1.261, loss_g: 0.916
+[132/200]: loss_d: 1.271, loss_g: 0.921
+[133/200]: loss_d: 1.273, loss_g: 0.894
+[134/200]: loss_d: 1.269, loss_g: 0.914
+[135/200]: loss_d: 1.279, loss_g: 0.898
+[136/200]: loss_d: 1.268, loss_g: 0.913
+[137/200]: loss_d: 1.271, loss_g: 0.902
+[138/200]: loss_d: 1.275, loss_g: 0.900
+[139/200]: loss_d: 1.279, loss_g: 0.890
+[140/200]: loss_d: 1.278, loss_g: 0.891
+[141/200]: loss_d: 1.279, loss_g: 0.894
+[142/200]: loss_d: 1.268, loss_g: 0.912
+[143/200]: loss_d: 1.273, loss_g: 0.896
+[144/200]: loss_d: 1.279, loss_g: 0.893
+[145/200]: loss_d: 1.277, loss_g: 0.903
+[146/200]: loss_d: 1.276, loss_g: 0.903
+[147/200]: loss_d: 1.277, loss_g: 0.890
+[148/200]: loss_d: 1.277, loss_g: 0.896
+[149/200]: loss_d: 1.279, loss_g: 0.891
+[150/200]: loss_d: 1.282, loss_g: 0.880
+[151/200]: loss_d: 1.285, loss_g: 0.869
+[152/200]: loss_d: 1.282, loss_g: 0.886
+[153/200]: loss_d: 1.280, loss_g: 0.900
+[154/200]: loss_d: 1.277, loss_g: 0.898
+[155/200]: loss_d: 1.279, loss_g: 0.892
+[156/200]: loss_d: 1.281, loss_g: 0.885
+[157/200]: loss_d: 1.284, loss_g: 0.875
+[158/200]: loss_d: 1.283, loss_g: 0.890
+[159/200]: loss_d: 1.281, loss_g: 0.887
+[160/200]: loss_d: 1.279, loss_g: 0.893
+[161/200]: loss_d: 1.282, loss_g: 0.894
+[162/200]: loss_d: 1.276, loss_g: 0.891
+[163/200]: loss_d: 1.280, loss_g: 0.894
+[164/200]: loss_d: 1.282, loss_g: 0.887
+[165/200]: loss_d: 1.281, loss_g: 0.894
+[166/200]: loss_d: 1.284, loss_g: 0.878
+[167/200]: loss_d: 1.283, loss_g: 0.890
+[168/200]: loss_d: 1.277, loss_g: 0.901
+[169/200]: loss_d: 1.275, loss_g: 0.904
+[170/200]: loss_d: 1.275, loss_g: 0.893
+[171/200]: loss_d: 1.282, loss_g: 0.879
+[172/200]: loss_d: 1.290, loss_g: 0.875
+[173/200]: loss_d: 1.278, loss_g: 0.895
+[174/200]: loss_d: 1.284, loss_g: 0.883
+[175/200]: loss_d: 1.283, loss_g: 0.888
+[176/200]: loss_d: 1.281, loss_g: 0.891
+[177/200]: loss_d: 1.281, loss_g: 0.887
+[178/200]: loss_d: 1.281, loss_g: 0.888
+[179/200]: loss_d: 1.286, loss_g: 0.878
+[180/200]: loss_d: 1.285, loss_g: 0.887
+[181/200]: loss_d: 1.284, loss_g: 0.879
+[182/200]: loss_d: 1.287, loss_g: 0.873
+[183/200]: loss_d: 1.288, loss_g: 0.880
+[184/200]: loss_d: 1.286, loss_g: 0.881
+[185/200]: loss_d: 1.285, loss_g: 0.877
+[186/200]: loss_d: 1.291, loss_g: 0.867
+[187/200]: loss_d: 1.286, loss_g: 0.885
+[188/200]: loss_d: 1.283, loss_g: 0.884
+[189/200]: loss_d: 1.285, loss_g: 0.873
+[190/200]: loss_d: 1.287, loss_g: 0.888
+[191/200]: loss_d: 1.288, loss_g: 0.866
+[192/200]: loss_d: 1.281, loss_g: 0.889
+[193/200]: loss_d: 1.289, loss_g: 0.875
+[194/200]: loss_d: 1.284, loss_g: 0.877
+[195/200]: loss_d: 1.292, loss_g: 0.870
+[196/200]: loss_d: 1.290, loss_g: 0.872
+[197/200]: loss_d: 1.291, loss_g: 0.883
+[198/200]: loss_d: 1.286, loss_g: 0.881
+[199/200]: loss_d: 1.280, loss_g: 0.887
+[200/200]: loss_d: 1.282, loss_g: 0.879
+
