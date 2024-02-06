@@ -1,7 +1,7 @@
 # studymodel
 关于gan的简单例子
 
-1 mnistgun.py  生成手写字 最基础样例 
+1 pytorch_gan_mnist.py  生成手写字 最基础样例 
 
 2 pytorch_dcgan_minst.py  生成手写字 使用dcgan后的例子
 
