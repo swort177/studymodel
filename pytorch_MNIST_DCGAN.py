@@ -166,8 +166,8 @@ transform = transforms.Compose([
 dataset = datasets.MNIST('data', train=True, download=True, transform=transform)
 train_loader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
 
-# print(dataset)
-# print(train_loader)
+print(dataset)
+print(train_loader)
 # network
 G = generator(128)
 D = discriminator(128)
@@ -207,7 +207,7 @@ for epoch in range(train_epoch):
     for x_, _ in train_loader:
         # train discriminator D
         D.zero_grad()
-        print(f"num_iter({num_iter+1}/{len(train_loader.dataset)/train_loader.batch_size}) epoch:({epoch+1}/{train_epoch}) ")
+        print(f"num_iter({num_iter+1}/{len(train_loader.dataset)/train_loader.batch_size}) epoch:({epoch+1}/{train_epoch}) /")
         mini_batch = x_.size()[0]
 
         y_real_ = torch.ones(mini_batch)
@@ -270,7 +270,7 @@ total_ptime = end_time - start_time
 train_hist['total_ptime'].append(total_ptime)
 
 print("Avg per epoch ptime: %.2f, total %d epochs ptime: %.2f" % (
-    torch.mean(torch.FloatTensor(train_hist['per_epoch_ptimes'])), 
+    torch.mean(torch.FloatTensor(train_hist['per_epoch_ptimes'])),
     train_epoch, total_ptime))
 print("Training finish!... save training results")
 torch.save(G.state_dict(), "MNIST_DCGAN_resultsdays28/generator_param.pkl")
