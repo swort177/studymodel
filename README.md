@@ -9,5 +9,5 @@
 
 4  pytorch_stn_mnist.py   生成手写字 使用STN的例子
 
-4 一些应用gan有趣的应用 https://github.com/nashory/gans-awesome-applications
+5 一些应用gan有趣的应用 https://github.com/nashory/gans-awesome-applications
 
